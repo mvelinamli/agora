@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Server, Hash, Volume2, Settings, Mic, MicOff, Headphones,
-  HeadphonesOff, Send, Plus, Trash2, Sun, Moon, Users,
+  EarOff, Send, Plus, Trash2, Sun, Moon, Users,
   MoreVertical, Heart, MessageSquare, Share2, Map, Radio
 } from 'lucide-react';
 import { WalletConnectButton } from './components/ui/WalletConnectButton';
@@ -220,7 +220,7 @@ function App() {
                 </div>
                 <div className="flex gap-1 text-gray-400">
                   <button onClick={() => setMicMuted(!isMicMuted)} className={`p-1.5 rounded transition ${isMicMuted ? 'bg-red-500 text-white' : theme.hover}`}>{isMicMuted ? <MicOff size={16} /> : <Mic size={16} />}</button>
-                  <button onClick={() => setDeafened(!isDeafened)} className={`p-1.5 rounded transition ${isDeafened ? 'bg-red-500 text-white' : theme.hover}`}>{isDeafened ? <HeadphonesOff size={16} /> : <Headphones size={16} />}</button>
+                  <button onClick={() => setDeafened(!isDeafened)} className={`p-1.5 rounded transition ${isDeafened ? 'bg-red-500 text-white' : theme.hover}`}>{isDeafened ? <EarOff size={16} /> : <Headphones size={16} />}</button>
                 </div>
               </div>
               <div className="h-8 w-full opacity-80"><VoiceVisualizer analyser={analyser} isActive={!isMicMuted} /></div>
