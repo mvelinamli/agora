@@ -1,0 +1,27 @@
+[package]
+name = "agora-app"
+version = "0.0.0"
+description = "AGORA Tauri App"
+authors = ["you"]
+edition = "2021"
+
+[build-dependencies]
+# BURASI KRİTİK: v1.5 sürümüne sabitliyoruz
+tauri-build = { version = "1.5", features = [] }
+
+[dependencies]
+# Ana Tauri Kütüphanesi
+tauri = { version = "1.6", features = ["shell-open"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# WebRTC ve Sunucu için Gerekli Paketler
+actix = "0.13"
+actix-web = "4"
+actix-web-actors = "4.2"
+uuid = { version = "1.0", features = ["v4"] }
+
+[features]
+# Bu kısım varsayılan olarak boş kalabilir
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
