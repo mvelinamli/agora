@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { X, Share2, User, Share, Settings, Shield, Volume2, Bell, LogOut } from 'lucide-react';
+import { X, Share2, User, Share, Settings, Shield, Volume2, Bell, LogOut, Camera, Save } from 'lucide-react';
 import ForceGraph2D from 'react-force-graph-2d';
 
 // --- ÖRNEK VERİ (Graph) ---
@@ -21,7 +21,12 @@ const MOCK_DATA = {
 
 export const ProfileModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
     const fgRef = useRef<any>();
-    const [activeTab, setActiveTab] = useState('network');
+    const [activeTab, setActiveTab] = useState('profile'); // Varsayılan sekme artık Profil
+    const [profile, setProfile] = useState({
+        name: "Ahmet.agora",
+        bio: "Blockchain meraklısı, Rust geliştirici.",
+        color: "bg-gradient-to-tr from-indigo-500 to-purple-600"
+    });
 
     useEffect(() => {
         if (isOpen && activeTab === 'network' && fgRef.current) {
@@ -40,12 +45,13 @@ export const ProfileModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: ()
                 {/* SOL MENÜ */}
                 <div className="w-64 bg-black/40 p-6 flex flex-col gap-6 border-r border-white/5">
                     <div className="text-center">
-                        <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 mx-auto flex items-center justify-center font-bold text-3xl text-white shadow-lg mb-3">A</div>
-                        <h2 className="text-white font-bold text-lg">Ahmet.agora</h2>
+                        <div className={`w-24 h-24 rounded-full ${profile.color} mx-auto flex items-center justify-center font-bold text-4xl text-white shadow-lg mb-3 border-4 border-[#0b0c15]`}>{profile.name.charAt(0)}</div>
+                        <h2 className="text-white font-bold text-lg truncate">{profile.name}</h2>
                         <p className="text-xs text-indigo-400 font-mono bg-indigo-500/10 py-1 px-2 rounded mt-2 inline-block">0x71...9A2</p>
                     </div>
 
                     <nav className="flex-1 space-y-1">
+                        <SidebarButton active={activeTab === 'profile'} onClick={() => setActiveTab('profile')} icon={<User size={18} />} label="Profilim" />
                         <SidebarButton active={activeTab === 'network'} onClick={() => setActiveTab('network')} icon={<Share size={18} />} label="İlişki Ağı" />
                         <SidebarButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<Settings size={18} />} label="Ayarlar" />
                     </nav>
@@ -59,7 +65,40 @@ export const ProfileModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: ()
                 <div className="flex-1 bg-[#050505] relative flex flex-col">
                     <button onClick={onClose} className="absolute top-4 right-4 z-50 p-2 bg-white/5 hover:bg-white/20 rounded-full text-white transition"><X size={20} /></button>
 
-                    {/* İÇERİK: NETWORK */}
+                    {/* --- SEKME: PROFİL DÜZENLEME --- */}
+                    {activeTab === 'profile' && (
+                        <div className="p-8 overflow-y-auto h-full">
+                            <h2 className="text-2xl font-bold text-white mb-1">Kullanıcı Profili</h2>
+                            <p className="text-gray-500 text-sm mb-8">Toplulukta nasıl göründüğünü özelleştir.</p>
+
+                            <div className="bg-white/5 rounded-2xl p-6 border border-white/5 mb-6 relative overflow-hidden group">
+                                <div className={`h-24 w-full ${profile.color} absolute top-0 left-0 opacity-30`}></div>
+                                <div className="relative flex items-end gap-4 mt-8">
+                                    <div className={`w-20 h-20 rounded-full ${profile.color} flex items-center justify-center text-3xl font-bold text-white border-4 border-[#0b0c15]`}>
+                                        {profile.name.charAt(0)}
+                                        <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 rounded-full transition cursor-pointer"><Camera size={20} /></div>
+                                    </div>
+                                    <button className="mb-2 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition">Banner Değiştir</button>
+                                </div>
+                            </div>
+
+                            <div className="space-y-4 max-w-md">
+                                <div>
+                                    <label className="text-xs font-bold text-gray-400 uppercase">GÖRÜNEN İSİM</label>
+                                    <input type="text" value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} className="w-full bg-black/30 border border-white/10 rounded-xl p-3 text-white mt-1 outline-none focus:border-indigo-500 transition" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-gray-400 uppercase">HAKKINDA</label>
+                                    <textarea rows={3} value={profile.bio} onChange={(e) => setProfile({ ...profile, bio: e.target.value })} className="w-full bg-black/30 border border-white/10 rounded-xl p-3 text-white mt-1 outline-none focus:border-indigo-500 transition resize-none" />
+                                </div>
+                                <button className="flex items-center gap-2 px-6 py-3 bg-green-600 hover:bg-green-500 text-white font-bold rounded-xl transition">
+                                    <Save size={18} /> Değişiklikleri Kaydet
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* --- SEKME: NETWORK --- */}
                     {activeTab === 'network' && (
                         <ForceGraph2D
                             ref={fgRef}
@@ -72,37 +111,17 @@ export const ProfileModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: ()
                         />
                     )}
 
-                    {/* İÇERİK: AYARLAR (Artık Dolu!) */}
+                    {/* --- SEKME: AYARLAR --- */}
                     {activeTab === 'settings' && (
                         <div className="p-8 overflow-y-auto h-full">
                             <h2 className="text-2xl font-bold text-white mb-6">Uygulama Ayarları</h2>
-
                             <div className="space-y-6">
-                                {/* Ses Ayarları */}
                                 <SettingSection title="Ses ve Görüntü" icon={<Volume2 className="text-indigo-400" />}>
-                                    <SettingItem label="Giriş Cihazı" value="MacBook Pro Microphone (Default)" />
-                                    <SettingItem label="Çıkış Cihazı" value="MacBook Pro Speakers" />
-                                    <div className="flex items-center justify-between py-2">
-                                        <span className="text-gray-400 text-sm">Gürültü Engelleme (AI)</span>
-                                        <div className="w-10 h-5 bg-green-500 rounded-full relative cursor-pointer"><div className="absolute right-1 top-1 w-3 h-3 bg-white rounded-full"></div></div>
-                                    </div>
+                                    <SettingItem label="Giriş Cihazı" value="Default Mic" />
+                                    <SettingItem label="Çıkış Cihazı" value="Default Speakers" />
                                 </SettingSection>
-
-                                {/* Gizlilik */}
-                                <SettingSection title="Gizlilik ve Güvenlik" icon={<Shield className="text-green-400" />}>
-                                    <div className="flex items-center justify-between py-2">
-                                        <span className="text-gray-400 text-sm">Cüzdan Bakiyemi Gizle</span>
-                                        <div className="w-10 h-5 bg-gray-600 rounded-full relative cursor-pointer"><div className="absolute left-1 top-1 w-3 h-3 bg-white rounded-full"></div></div>
-                                    </div>
-                                    <div className="flex items-center justify-between py-2">
-                                        <span className="text-gray-400 text-sm">DM'lere İzin Ver</span>
-                                        <div className="w-10 h-5 bg-green-500 rounded-full relative cursor-pointer"><div className="absolute right-1 top-1 w-3 h-3 bg-white rounded-full"></div></div>
-                                    </div>
-                                </SettingSection>
-
-                                {/* Bildirimler */}
-                                <SettingSection title="Bildirimler" icon={<Bell className="text-yellow-400" />}>
-                                    <SettingItem label="Masaüstü Bildirimleri" value="Açık" />
+                                <SettingSection title="Gizlilik" icon={<Shield className="text-green-400" />}>
+                                    <SettingItem label="DM İzinleri" value="Herkese Açık" />
                                 </SettingSection>
                             </div>
                         </div>
