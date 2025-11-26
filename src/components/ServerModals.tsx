@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { X, Gamepad2, Briefcase, GraduationCap, Upload, Globe, Lock, Hash, Volume2 } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { X, Gamepad2, Briefcase, GraduationCap, Shield, Hash, Volume2, Upload, Camera, Image as ImageIcon } from 'lucide-react';
 
 // --- GELİŞMİŞ SUNUCU OLUŞTURMA MODALI ---
 export const CreateServerModal = ({ isOpen, onClose, onCreate }: any) => {
@@ -10,15 +10,60 @@ export const CreateServerModal = ({ isOpen, onClose, onCreate }: any) => {
         name: '',
         type: '',
         description: '',
-        iconUrl: '',
+        iconUrl: '', // Buraya Base64 gelecek
         isPublic: false
     });
 
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const [isCameraOpen, setIsCameraOpen] = useState(false);
+
+    // DOSYA SEÇME
+    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                setFormData({ ...formData, iconUrl: reader.result as string });
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+
+    // KAMERA AÇMA
+    const startCamera = async () => {
+        setIsCameraOpen(true);
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            if (videoRef.current) videoRef.current.srcObject = stream;
+        } catch (err) {
+            alert("Kamera açılamadı: " + err);
+            setIsCameraOpen(false);
+        }
+    };
+
+    // FOTOĞRAF ÇEKME
+    const capturePhoto = () => {
+        if (videoRef.current) {
+            const canvas = document.createElement('canvas');
+            canvas.width = videoRef.current.videoWidth;
+            canvas.height = videoRef.current.videoHeight;
+            canvas.getContext('2d')?.drawImage(videoRef.current, 0, 0);
+            const dataUrl = canvas.toDataURL('image/jpeg');
+
+            setFormData({ ...formData, iconUrl: dataUrl });
+
+            // Kamerayı Kapat
+            const stream = videoRef.current.srcObject as MediaStream;
+            stream.getTracks().forEach(track => track.stop());
+            setIsCameraOpen(false);
+        }
+    };
+
     const handleCreate = () => {
         if (!formData.name) return;
-        onCreate(formData); // Tüm veriyi gönder
+        onCreate(formData);
         onClose();
-        // Reset
         setStep(1);
         setFormData({ name: '', type: '', description: '', iconUrl: '', isPublic: false });
     };
@@ -29,7 +74,7 @@ export const CreateServerModal = ({ isOpen, onClose, onCreate }: any) => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in fade-in zoom-in duration-200">
             <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose}></div>
             <div className="relative z-50 w-full max-w-md bg-[#1e1f2b] border border-white/10 rounded-2xl overflow-hidden shadow-2xl">
-                <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-white"><X size={20} /></button>
+                <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-white z-10"><X size={20} /></button>
 
                 <div className="p-6">
                     <h2 className="text-2xl font-bold text-white mb-1 text-center">Sunucunu Kur</h2>
@@ -44,57 +89,52 @@ export const CreateServerModal = ({ isOpen, onClose, onCreate }: any) => {
                         </div>
                     ) : (
                         <div className="space-y-4">
-                            {/* İkon Yükleme (URL) */}
+                            {/* RESİM YÜKLEME ALANI */}
                             <div className="flex justify-center">
-                                <div className="relative group cursor-pointer">
-                                    {formData.iconUrl ? (
-                                        <img src={formData.iconUrl} alt="Icon" className="w-24 h-24 rounded-full object-cover border-4 border-[#1e1f2b] shadow-lg" />
-                                    ) : (
-                                        <div className="w-24 h-24 rounded-full bg-indigo-600 flex items-center justify-center text-3xl font-bold text-white border-4 border-dashed border-white/20 group-hover:border-white/50 transition">
-                                            {formData.name ? formData.name.charAt(0).toUpperCase() : <Upload size={24} />}
+                                {isCameraOpen ? (
+                                    <div className="relative w-full h-64 bg-black rounded-xl overflow-hidden">
+                                        <video ref={videoRef} autoPlay className="w-full h-full object-cover" />
+                                        <button onClick={capturePhoto} className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-white text-black font-bold rounded-full shadow-lg hover:scale-105 transition">Çek</button>
+                                    </div>
+                                ) : (
+                                    <div className="relative group w-24 h-24">
+                                        {formData.iconUrl ? (
+                                            <img src={formData.iconUrl} alt="Icon" className="w-24 h-24 rounded-full object-cover border-4 border-[#1e1f2b] shadow-lg" />
+                                        ) : (
+                                            <div className="w-24 h-24 rounded-full bg-indigo-600 flex items-center justify-center text-3xl font-bold text-white border-4 border-dashed border-white/20">
+                                                {formData.name ? formData.name.charAt(0).toUpperCase() : <Upload size={24} />}
+                                            </div>
+                                        )}
+
+                                        {/* Hover Menüsü */}
+                                        <div className="absolute inset-0 bg-black/60 rounded-full flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
+                                            <button onClick={() => fileInputRef.current?.click()} className="p-2 bg-white/10 rounded-full hover:bg-white/20 text-white" title="Dosya Seç"><ImageIcon size={16} /></button>
+                                            <button onClick={startCamera} className="p-2 bg-white/10 rounded-full hover:bg-white/20 text-white" title="Kamera"><Camera size={16} /></button>
                                         </div>
-                                    )}
-                                </div>
+                                        <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*" className="hidden" />
+                                    </div>
+                                )}
                             </div>
 
-                            {/* Form Alanları */}
-                            <div className="space-y-3">
-                                <div>
-                                    <label className="text-xs font-bold text-gray-400 uppercase">Sunucu Adı *</label>
-                                    <input autoFocus type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full bg-black/30 border border-white/10 rounded-xl p-3 text-white mt-1 outline-none focus:border-indigo-500 transition" placeholder="Örn: Efsanevi Oyuncular" />
-                                </div>
-
-                                <div>
-                                    <label className="text-xs font-bold text-gray-400 uppercase">Resim Linki (Opsiyonel)</label>
-                                    <input type="text" value={formData.iconUrl} onChange={(e) => setFormData({ ...formData, iconUrl: e.target.value })} className="w-full bg-black/30 border border-white/10 rounded-xl p-3 text-white mt-1 outline-none focus:border-indigo-500 transition text-sm" placeholder="https://..." />
-                                </div>
-
-                                <div>
-                                    <label className="text-xs font-bold text-gray-400 uppercase">Açıklama</label>
-                                    <textarea rows={2} value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} className="w-full bg-black/30 border border-white/10 rounded-xl p-3 text-white mt-1 outline-none focus:border-indigo-500 transition text-sm resize-none" placeholder="Bu sunucu ne hakkında?" />
-                                </div>
-
-                                {/* Public/Private Toggle */}
-                                <div className="flex items-center justify-between bg-white/5 p-3 rounded-xl border border-white/5 cursor-pointer" onClick={() => setFormData({ ...formData, isPublic: !formData.isPublic })}>
-                                    <div className="flex items-center gap-3">
-                                        <div className={`p-2 rounded-lg ${formData.isPublic ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
-                                            {formData.isPublic ? <Globe size={18} /> : <Lock size={18} />}
+                            {!isCameraOpen && (
+                                <>
+                                    <div className="space-y-3">
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-400 uppercase">Sunucu Adı *</label>
+                                            <input autoFocus type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full bg-black/30 border border-white/10 rounded-xl p-3 text-white mt-1 outline-none focus:border-indigo-500 transition" placeholder="Örn: Efsanevi Oyuncular" />
                                         </div>
                                         <div>
-                                            <div className="text-sm font-bold text-white">{formData.isPublic ? 'Herkese Açık' : 'Gizli Sunucu'}</div>
-                                            <div className="text-xs text-gray-400">{formData.isPublic ? 'Herkes katılabilir.' : 'Sadece davetle.'}</div>
+                                            <label className="text-xs font-bold text-gray-400 uppercase">Açıklama</label>
+                                            <textarea rows={2} value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} className="w-full bg-black/30 border border-white/10 rounded-xl p-3 text-white mt-1 outline-none focus:border-indigo-500 transition text-sm resize-none" placeholder="Bu sunucu ne hakkında?" />
                                         </div>
                                     </div>
-                                    <div className={`w-10 h-5 rounded-full relative transition ${formData.isPublic ? 'bg-green-500' : 'bg-gray-600'}`}>
-                                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${formData.isPublic ? 'left-6' : 'left-1'}`}></div>
-                                    </div>
-                                </div>
-                            </div>
 
-                            <div className="flex gap-3 mt-2">
-                                <button onClick={() => setStep(1)} className="flex-1 py-3 text-gray-400 hover:text-white hover:bg-white/5 rounded-xl transition">Geri</button>
-                                <button onClick={handleCreate} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl transition shadow-lg shadow-indigo-500/20">Oluştur</button>
-                            </div>
+                                    <div className="flex gap-3 mt-2">
+                                        <button onClick={() => setStep(1)} className="flex-1 py-3 text-gray-400 hover:text-white hover:bg-white/5 rounded-xl transition">Geri</button>
+                                        <button onClick={handleCreate} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl transition shadow-lg shadow-indigo-500/20">Oluştur</button>
+                                    </div>
+                                </>
+                            )}
                         </div>
                     )}
                 </div>
@@ -103,7 +143,9 @@ export const CreateServerModal = ({ isOpen, onClose, onCreate }: any) => {
     );
 };
 
-// Yardımcı Bileşen
+// ... Diğer bileşenler (CreateChannelModal, ServerSettingsModal vb.) aynı kalacak ...
+// (Hızlıca aşağıya ekliyorum ki dosya tam olsun)
+
 const CategoryButton = ({ icon, title, desc, onClick }: any) => (
     <button onClick={onClick} className="w-full flex items-center gap-4 p-4 rounded-xl border border-white/5 hover:bg-indigo-600/20 hover:border-indigo-500 transition group text-left">
         <div className="w-10 h-10 rounded-full bg-white/5 text-gray-400 flex items-center justify-center group-hover:bg-indigo-500 group-hover:text-white transition">{icon}</div>
@@ -111,7 +153,6 @@ const CategoryButton = ({ icon, title, desc, onClick }: any) => (
     </button>
 );
 
-// --- KANAL OLUŞTURMA ve AYARLAR MODALLARI (Aynı Kalıyor) ---
 export const CreateChannelModal = ({ isOpen, onClose, onCreate }: any) => {
     const [name, setName] = useState('');
     const [type, setType] = useState<'text' | 'voice'>('text');
