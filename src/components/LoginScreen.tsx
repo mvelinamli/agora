@@ -1,20 +1,26 @@
 import React, { useState } from 'react';
-import { Wallet, Disc } from 'lucide-react';
+import { Wallet, Disc, User } from 'lucide-react';
 
 interface Props {
-    onLogin: () => void;
+    onLogin: (username: string) => void; // Artık isim gönderiyor
 }
 
 export const LoginScreen: React.FC<Props> = ({ onLogin }) => {
     const [loading, setLoading] = useState(false);
+    const [username, setUsername] = useState(""); // İsim verisi
 
     const handleLogin = (method: string) => {
+        if (!username.trim()) {
+            alert("Lütfen bir kullanıcı adı belirle!");
+            return;
+        }
+
         setLoading(true);
-        // Simülasyon: 1.5 saniye bekle ve giriş yap
+        // Simülasyon: Giriş yapılıyor...
         setTimeout(() => {
             setLoading(false);
-            onLogin();
-        }, 1500);
+            onLogin(username); // İsmi App.tsx'e gönder
+        }, 1000);
     };
 
     return (
@@ -31,11 +37,27 @@ export const LoginScreen: React.FC<Props> = ({ onLogin }) => {
                     <div className="w-16 h-16 bg-gradient-to-tr from-indigo-500 to-purple-600 rounded-2xl mx-auto flex items-center justify-center mb-4 shadow-lg shadow-indigo-500/20">
                         <span className="text-3xl font-bold text-white">A</span>
                     </div>
-                    <h1 className="text-2xl font-bold text-white tracking-tight">AGORA'ya Hoş Geldin</h1>
-                    <p className="text-gray-400 text-sm mt-2">Yeni nesil topluluk deneyimi.</p>
+                    <h1 className="text-2xl font-bold text-white tracking-tight">AGORA</h1>
+                    <p className="text-gray-400 text-sm mt-2">Topluluğuna katıl.</p>
                 </div>
 
-                <div className="space-y-3">
+                {/* YENİ: Kullanıcı Adı Giriş Alanı */}
+                <div className="space-y-2">
+                    <label className="text-xs font-bold text-gray-500 uppercase ml-1">Kullanıcı Adın</label>
+                    <div className="flex items-center bg-black/30 border border-white/10 rounded-xl px-4 py-3 focus-within:border-indigo-500 transition-colors">
+                        <User size={18} className="text-gray-400 mr-3" />
+                        <input
+                            type="text"
+                            value={username}
+                            onChange={(e) => setUsername(e.target.value)}
+                            placeholder="Örn: CyberPunk_2077"
+                            className="bg-transparent border-none outline-none text-white w-full placeholder-gray-600"
+                            onKeyDown={(e) => e.key === 'Enter' && handleLogin('enter')}
+                        />
+                    </div>
+                </div>
+
+                <div className="space-y-3 pt-2">
                     <button onClick={() => handleLogin('google')} disabled={loading} className="w-full flex items-center justify-center gap-3 py-3.5 bg-white text-gray-900 rounded-xl hover:bg-gray-100 transition font-bold text-sm">
                         Google ile Devam Et
                     </button>
@@ -55,7 +77,7 @@ export const LoginScreen: React.FC<Props> = ({ onLogin }) => {
                 </button>
 
             </div>
-            <div className="absolute bottom-6 text-xs text-gray-600 font-mono">v0.1.0 • Powered by Solana</div>
+            <div className="absolute bottom-6 text-xs text-gray-600 font-mono">v1.0.2 • Production Build</div>
         </div>
     );
 };
