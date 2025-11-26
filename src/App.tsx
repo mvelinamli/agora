@@ -391,4 +391,24 @@ function App() {
 
 // --- YARDIMCI BİLEŞENLER ---
 const GlassPanel = ({ children, className, onClick, isDarkMode }: any) => (
-  <div onClick={onClick} className={`backdrop-blur-xl ${isDarkMode ? 'bg-[#11131f]/60 border-white
+  <div
+    onClick={onClick}
+    className={`backdrop-blur-xl border rounded-3xl shadow-xl overflow-hidden ${isDarkMode
+        ? 'bg-[#11131f]/60 border-white/5'
+        : 'bg-white/70 border-gray-200'
+      } ${className}`}
+  >
+    {children}
+  </div>
+);
+
+const ChannelItem = ({ name, type, active, onClick, tag, onDelete, isDarkMode }: any) => (
+  <div onClick={onClick} className={`group flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer transition-all ${active ? 'bg-indigo-500/20 text-indigo-500 border border-indigo-500/30' : 'text-gray-400 hover:bg-black/5 dark:hover:bg-white/5'}`}>
+    {type === 'text' ? <Hash size={16} /> : <Volume2 size={16} />}
+    <span className="flex-1 truncate font-medium text-sm">{name}</span>
+    {tag && <span className="text-[9px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded shadow-lg shadow-red-500/20">{tag}</span>}
+    <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-500 transition"><Trash2 size={14} /></button>
+  </div>
+);
+
+export default App;
