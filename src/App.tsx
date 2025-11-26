@@ -18,7 +18,7 @@ function App() {
 
   // --- STATE ---
   const [activeTab, setActiveTab] = useState<'chat' | 'spatial' | 'feed'>('chat');
-  const [activeServerId, setActiveServerId] = useState<number>(0); // 0 başlangıç değeri
+  const [activeServerId, setActiveServerId] = useState<number>(0);
   const [activeChannelId, setActiveChannelId] = useState<number | null>(null);
   const [showMembers, setShowMembers] = useState(true);
   const [currentUser, setCurrentUser] = useState("Misafir");
@@ -28,6 +28,10 @@ function App() {
   const [servers, setServers] = useState<any[]>([]);
   const [channels, setChannels] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
+
+  // MULTIPLAYER STATE (YENİ!)
+  const [onlineUsers, setOnlineUsers] = useState<Record<string, any>>({});
+  const channelRef = useRef<any>(null); // Kanal bağlantısını tutar
 
   // Modallar
   const [isProfileOpen, setProfileOpen] = useState(false);
@@ -51,7 +55,6 @@ function App() {
       const { data: serverData } = await supabase.from('servers').select('*').order('id', { ascending: true });
       if (serverData && serverData.length > 0) {
         setServers(serverData);
-        // Eğer daha önce seçili sunucu yoksa ilkini seç
         setActiveServerId(prev => prev === 0 ? serverData[0].id : prev);
       }
 
@@ -64,13 +67,11 @@ function App() {
 
     initData();
 
-    // REALTIME DİNLEME
     const sub = supabase.channel('public:all')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'servers' }, payload => {
         if (payload.eventType === 'INSERT') setServers(prev => [...prev, payload.new]);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'channels' }, payload => {
-        // Sadece başkası eklediyse listeye ekle (kendimiz ekleyince manuel ekliyoruz zaten)
         if (payload.eventType === 'INSERT') {
           setChannels(prev => {
             if (prev.find(c => c.id === payload.new.id)) return prev;
@@ -84,7 +85,71 @@ function App() {
     return () => { supabase.removeChannel(sub); };
   }, [isLoggedIn]);
 
-  // --- KANAL DEĞİŞİNCE MESAJLARI ÇEK ---
+  // --- MULTIPLAYER MOTORU (REALTIME PRESENCE) ---
+  const [pos, setPos] = useState({ x: 300, y: 200 });
+
+  // 1. Odaya Bağlan ve Diğerlerini Dinle
+  useEffect(() => {
+    if (activeTab !== 'spatial' || !activeChannelId) return;
+
+    // Kanal ismini benzersiz yap (Room ID)
+    const channel = supabase.channel(`room:${activeChannelId}`, {
+      config: {
+        presence: {
+          key: currentUser, // Beni bu isimle takip et
+        },
+      },
+    });
+
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        const newState = channel.presenceState();
+        const users: any = {};
+        // Gelen veriyi işle
+        for (const key in newState) {
+          if (key !== currentUser) { // Kendimizi tekrar çizmemize gerek yok
+            // En son gelen konum bilgisini al
+            users[key] = newState[key][0];
+          }
+        }
+        setOnlineUsers(users);
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          // Bağlanınca ilk konumumuzu gönderelim
+          await channel.track({
+            x: pos.x,
+            y: pos.y,
+            username: currentUser,
+            color: '#4f46e5'
+          });
+        }
+      });
+
+    channelRef.current = channel;
+
+    return () => {
+      supabase.removeChannel(channel);
+      channelRef.current = null;
+    };
+  }, [activeTab, activeChannelId]); // Sadece oda değişince çalışır
+
+  // 2. Hareket Edince Konumu Yayınla
+  useEffect(() => {
+    if (channelRef.current && activeTab === 'spatial') {
+      // Her hareketimizde yeni konumu gönderiyoruz
+      // Not: Gerçek bir oyunda bunu "Throttle" (yavaşlatma) ile yapmak gerekir ama demo için sorun yok.
+      channelRef.current.track({
+        x: pos.x,
+        y: pos.y,
+        username: currentUser,
+        color: '#4f46e5'
+      });
+    }
+  }, [pos]);
+
+
+  // --- MESAJLARI YÖNET ---
   useEffect(() => {
     if (!activeChannelId) return;
 
@@ -107,7 +172,6 @@ function App() {
   // --- MANTIK ---
   const visibleChannels = channels.filter(c => c.server_id === activeServerId);
 
-  // Otomatik Kanal Seçimi
   useEffect(() => {
     if (visibleChannels.length > 0 && !visibleChannels.find(c => c.id === activeChannelId)) {
       const first = visibleChannels.find(c => c.type === 'text');
@@ -121,36 +185,24 @@ function App() {
   }, [activeServerId, channels]);
 
 
-  // --- İŞLEVLER (GÜNCELLENDİ) ---
-
+  // --- İŞLEVLER ---
   const handleCreateServer = async (name: string, type: string) => {
-    // 1. Sunucuyu Veritabanına Ekle
     const { data: server, error } = await supabase
       .from('servers')
       .insert({ name, icon: name.charAt(0).toUpperCase(), type })
       .select()
       .single();
 
-    if (error) {
-      alert("Hata: " + error.message);
-      return;
-    }
+    if (error) { alert("Hata: " + error.message); return; }
 
     if (server) {
-      // 2. Listeyi Manuel Güncelle (Beklemeden)
       setServers(prev => [...prev, server]);
-
-      // 3. Varsayılan Kanalları Ekle
       const { data: newChannels } = await supabase.from('channels').insert([
         { name: "genel", type: "text", server_id: server.id },
         { name: "Meydan", type: "voice", server_id: server.id }
       ]).select();
 
-      if (newChannels) {
-        setChannels(prev => [...prev, ...newChannels]);
-      }
-
-      // 4. Yeni Sunucuya Geç
+      if (newChannels) setChannels(prev => [...prev, ...newChannels]);
       setActiveServerId(server.id);
     }
   };
@@ -158,16 +210,9 @@ function App() {
   const handleAddChannel = async (type: string) => {
     const name = prompt(`${type === 'text' ? 'Metin' : 'Ses'} Kanalı Adı:`);
     if (name) {
-      const { data, error } = await supabase.from('channels').insert({
-        name, type, server_id: activeServerId
-      }).select().single();
-
-      if (error) {
-        alert("Hata: " + error.message);
-      } else if (data) {
-        // Manuel Güncelleme
+      const { data, error } = await supabase.from('channels').insert({ name, type, server_id: activeServerId }).select().single();
+      if (data) {
         setChannels(prev => [...prev, data]);
-        // Yeni kanalı aç
         setActiveChannelId(data.id);
         if (type === 'text') setActiveTab('chat'); else setActiveTab('spatial');
       }
@@ -176,53 +221,65 @@ function App() {
 
   const handleDeleteChannel = async (id: number) => {
     if (confirm("Kanalı silmek istiyor musun?")) {
-      // Listeden hemen sil
+      await supabase.from('channels').delete().eq('id', id);
       setChannels(prev => prev.filter(c => c.id !== id));
       if (activeChannelId === id) setActiveChannelId(null);
-
-      // Veritabanından sil
-      await supabase.from('channels').delete().eq('id', id);
     }
   };
 
   const handleSendMessage = async () => {
     if (!inputText.trim() || !activeChannelId) return;
-
-    // Geçici Mesaj Ekle (Hız hissi için)
-    const tempMsg = {
-      id: Date.now(),
-      content: inputText,
-      username: currentUser,
-      created_at: new Date().toISOString(),
-      channel_id: activeChannelId
-    };
-    // setMessages(prev => [...prev, tempMsg]); // Realtime hızlıysa buna gerek yok
-
-    const { error } = await supabase.from('messages').insert({
-      content: inputText, channel_id: activeChannelId, username: currentUser
-    });
-
-    if (error) alert("Mesaj hatası: " + error.message);
+    const { error } = await supabase.from('messages').insert({ content: inputText, channel_id: activeChannelId, username: currentUser });
+    if (error) alert("Hata: " + error.message);
     else setInputText("");
   };
+
+  // --- KANAL TIKLAMA ---
+  const handleChannelClick = (channel: any) => {
+    setActiveChannelId(channel.id);
+    if (channel.type === 'text') setActiveTab('chat');
+    else setActiveTab('spatial');
+  }
 
   // --- DİĞER BİLEŞENLER ---
   const [inputText, setInputText] = useState("");
   const { analyser } = useAudioProcessor();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [pos, setPos] = useState({ x: 300, y: 200 });
 
-  // Spatial Canvas
+  // Canvas Çizim (GÜNCELLENDİ)
   useEffect(() => {
     if (activeTab === 'spatial' && canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d');
       if (ctx) {
-        ctx.fillStyle = isDarkMode ? '#1a1b26' : '#f3f4f6'; ctx.fillRect(0, 0, 800, 600);
-        ctx.fillStyle = '#4f46e5'; ctx.beginPath(); ctx.arc(pos.x, pos.y, 20, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = isDarkMode ? 'white' : 'black'; ctx.font = '12px Arial'; ctx.fillText(currentUser, pos.x - 15, pos.y - 25);
+        const bgColor = isDarkMode ? '#1a1b26' : '#f3f4f6';
+        const gridColor = isDarkMode ? '#333' : '#e5e7eb';
+
+        // 1. Zemini Temizle
+        ctx.fillStyle = bgColor; ctx.fillRect(0, 0, 800, 600);
+
+        // 2. Izgarayı Çiz
+        ctx.strokeStyle = gridColor; ctx.lineWidth = 1;
+        for (let i = 0; i < 800; i += 50) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 600); ctx.stroke(); }
+        for (let i = 0; i < 600; i += 50) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(800, i); ctx.stroke(); }
+
+        // 3. DİĞER OYUNCULARI Çiz (Multiplayer)
+        Object.values(onlineUsers).forEach((user: any) => {
+          ctx.fillStyle = '#10b981'; // Yeşil (Başkası)
+          ctx.beginPath(); ctx.arc(user.x, user.y, 20, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = isDarkMode ? 'white' : 'black';
+          ctx.font = '12px Arial';
+          ctx.fillText(user.username, user.x - 15, user.y - 25);
+        });
+
+        // 4. SENİ Çiz
+        ctx.fillStyle = '#4f46e5'; // İndigo (Sen)
+        ctx.beginPath(); ctx.arc(pos.x, pos.y, 20, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = isDarkMode ? 'white' : 'black';
+        ctx.font = '12px Arial';
+        ctx.fillText(currentUser, pos.x - 15, pos.y - 25);
       }
     }
-  }, [pos, activeTab, isDarkMode]);
+  }, [pos, activeTab, isDarkMode, currentUser, onlineUsers]); // onlineUsers değişince de çiz
 
   // Tuş Hareketi
   useEffect(() => {
@@ -248,35 +305,29 @@ function App() {
 
   return (
     <div className={`h-screen w-screen ${theme.bg} flex items-center justify-center p-4 overflow-hidden relative font-sans ${theme.text}`}>
-
       <ProfileModal isOpen={isProfileOpen} onClose={() => setProfileOpen(false)} />
-      <CreateServerModal isOpen={isCreateServerOpen} onClose={() => setCreateServerOpen(false)} onCreate={handleCreateServer} />
-      <ServerSettingsModal isOpen={isServerSettingsOpen} onClose={() => setServerSettingsOpen(false)} server={servers.find(s => s.id === activeServerId)} /><ProfileModal isOpen={isProfileOpen} onClose={() => setProfileOpen(false)} />
       <CreateServerModal isOpen={isCreateServerOpen} onClose={() => setCreateServerOpen(false)} onCreate={handleCreateServer} />
       <ServerSettingsModal isOpen={isServerSettingsOpen} onClose={() => setServerSettingsOpen(false)} server={servers.find(s => s.id === activeServerId)} />
 
       <div className="flex w-full h-full max-w-[1600px] gap-4 relative z-10">
 
-        {/* 1. SOL SÜTUN: SUNUCULAR */}
+        {/* 1. SOL SÜTUN */}
         <div className="w-[72px] flex flex-col gap-3 shrink-0">
           <GlassPanel isDarkMode={isDarkMode} className="h-14 bg-indigo-600 flex items-center justify-center cursor-pointer" onClick={() => setActiveTab('feed')}><span className="font-bold text-xl text-white">A</span></GlassPanel>
           <div className="w-full h-[2px] bg-gray-500/20 rounded-full"></div>
-
           {servers.map(s => (
             <GlassPanel key={s.id} isDarkMode={isDarkMode} onClick={() => setActiveServerId(s.id)} className={`h-[72px] flex items-center justify-center cursor-pointer transition-all border-l-4 ${activeServerId === s.id ? 'border-indigo-500 text-indigo-500' : 'border-transparent text-gray-400'}`}>
               <span className="font-bold text-lg">{s.icon}</span>
             </GlassPanel>
           ))}
-
           <GlassPanel isDarkMode={isDarkMode} onClick={() => setCreateServerOpen(true)} className="h-12 flex items-center justify-center cursor-pointer text-green-500 hover:text-green-400 transition-all"><Plus /></GlassPanel>
-
           <div className="mt-auto flex flex-col gap-2">
             <GlassPanel isDarkMode={isDarkMode} onClick={() => setIsDarkMode(!isDarkMode)} className="h-12 flex items-center justify-center cursor-pointer text-yellow-500 hover:text-yellow-400 transition-all">{isDarkMode ? <Sun size={20} /> : <Moon size={20} />}</GlassPanel>
             <GlassPanel isDarkMode={isDarkMode} onClick={() => setProfileOpen(true)} className="h-12 flex items-center justify-center cursor-pointer text-gray-400 hover:text-gray-500 transition-all"><Settings size={20} /></GlassPanel>
           </div>
         </div>
 
-        {/* 2. ORTA SÜTUN: KANALLAR */}
+        {/* 2. ORTA SÜTUN */}
         {activeTab !== 'feed' && (
           <div className="w-64 flex flex-col gap-4 shrink-0 animate-in slide-in-from-left-4 duration-300">
             <GlassPanel isDarkMode={isDarkMode} className="flex-1 p-3 flex flex-col">
@@ -292,13 +343,13 @@ function App() {
                   <div>
                     <div className="flex items-center justify-between px-2 mb-2"><h3 className="text-[10px] font-bold text-gray-500 uppercase">Metin</h3><Plus size={12} className="cursor-pointer text-gray-500 hover:text-indigo-500" onClick={() => handleAddChannel('text')} /></div>
                     {visibleChannels.filter(c => c.type === 'text').map(c => (
-                      <ChannelItem key={c.id} name={c.name} type="text" active={activeChannelId === c.id} onDelete={() => handleDeleteChannel(c.id)} onClick={() => { setActiveChannelId(c.id); setActiveTab('chat'); }} isDarkMode={isDarkMode} />
+                      <ChannelItem key={c.id} name={c.name} type="text" active={activeChannelId === c.id} onDelete={() => handleDeleteChannel(c.id)} onClick={() => handleChannelClick(c)} isDarkMode={isDarkMode} />
                     ))}
                   </div>
                   <div>
                     <div className="flex items-center justify-between px-2 mb-2"><h3 className="text-[10px] font-bold text-gray-500 uppercase">Ses</h3><Plus size={12} className="cursor-pointer text-gray-500 hover:text-indigo-500" onClick={() => handleAddChannel('voice')} /></div>
                     {visibleChannels.filter(c => c.type === 'voice').map(c => (
-                      <ChannelItem key={c.id} name={c.name} type="voice" active={activeChannelId === c.id} onDelete={() => handleDeleteChannel(c.id)} onClick={() => { setActiveChannelId(c.id); setActiveTab('spatial'); }} tag={c.name.includes('Meydan') ? 'CANLI' : ''} isDarkMode={isDarkMode} />
+                      <ChannelItem key={c.id} name={c.name} type="voice" active={activeChannelId === c.id} onDelete={() => handleDeleteChannel(c.id)} onClick={() => handleChannelClick(c)} tag={c.name.includes('Meydan') ? 'CANLI' : ''} isDarkMode={isDarkMode} />
                     ))}
                   </div>
                 </div>
@@ -325,7 +376,7 @@ function App() {
         {/* 3. ANA SAHNE */}
         <GlassPanel isDarkMode={isDarkMode} className="flex-1 flex flex-col relative overflow-hidden">
           {activeTab === 'feed' ? (
-            <div className="flex-1 flex items-center justify-center text-2xl font-bold text-gray-500">Akış Sayfası (Veritabanı Bağlanacak)</div>
+            <div className="flex-1 flex items-center justify-center text-2xl font-bold text-gray-500">Akış Sayfası (Demo)</div>
           ) : (
             <>
               <header className="h-14 border-b border-gray-500/10 flex items-center justify-between px-6 backdrop-blur-md shrink-0">
@@ -363,11 +414,42 @@ function App() {
                       </div>
                     </>
                   ) : (
-                    <div className={`flex-1 ${isDarkMode ? 'bg-[#1a1b26]' : 'bg-white'} relative flex items-center justify-center`}>
-                      <canvas ref={canvasRef} width={800} height={600} className="rounded-xl border border-white/10" />
+                    <div className={`flex-1 ${isDarkMode ? 'bg-[#1a1b26]' : 'bg-white'} relative flex items-center justify-center overflow-hidden`}>
+                      {spatialMode ? (
+                        <>
+                          <canvas ref={canvasRef} width={800} height={600} className="rounded-xl shadow-2xl border border-white/10" />
+                          <div className="absolute top-4 left-4 bg-black/50 p-2 rounded text-xs text-white backdrop-blur-md">WASD ile hareket et</div>
+                        </>
+                      ) : (
+                        <div className="text-center space-y-4">
+                          <div className="w-24 h-24 bg-indigo-500/10 rounded-full flex items-center justify-center mx-auto animate-pulse"><Volume2 className="text-indigo-500" size={48} /></div>
+                          <h2 className="text-2xl font-bold text-gray-500">Standart Ses Modu</h2>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
+
+                {/* SAĞ ÜYE PANELİ */}
+                {showMembers && (
+                  <div className={`w-60 border-l border-gray-500/10 ${isDarkMode ? 'bg-black/20' : 'bg-gray-50/50'} flex flex-col p-4`}>
+                    <h3 className="text-xs font-bold text-gray-500 uppercase mb-4 tracking-wider">Çevrimiçi — {members.length}</h3>
+                    <div className="space-y-2">
+                      {members.map(m => (
+                        <div key={m.id} className={`flex items-center gap-3 p-2 rounded-xl cursor-pointer hover:bg-gray-500/10`}>
+                          <div className="relative">
+                            <div className={`w-8 h-8 rounded-full ${m.avatarColor} flex items-center justify-center text-xs text-white font-bold`}>{m.name.charAt(0)}</div>
+                            <div className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-gray-900 bg-green-500`}></div>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className={`font-bold text-sm truncate ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{m.name}</div>
+                            <div className="text-[10px] text-gray-500">{m.role}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </>
           )}
