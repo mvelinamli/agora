@@ -9,7 +9,6 @@ import { ProfileModal } from './components/ProfileModal';
 import { VoiceVisualizer } from './components/ui/VoiceVisualizer';
 import { useAudioProcessor } from './hooks/useAudioProcessor';
 import { LoginScreen } from './components/LoginScreen';
-// YENİ MODAL EKLENDİ: CreateChannelModal
 import { CreateServerModal, ServerSettingsModal, CreateChannelModal } from './components/ServerModals';
 import { supabase } from './lib/supabaseClient';
 
@@ -23,46 +22,63 @@ function App() {
   const [activeChannelId, setActiveChannelId] = useState<number | null>(null);
   const [showMembers, setShowMembers] = useState(true);
   const [currentUser, setCurrentUser] = useState("Misafir");
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null); // GERÇEK USER ID
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const [servers, setServers] = useState<any[]>([]);
   const [channels, setChannels] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
 
-  // MODALLAR
+  // State'ler
+  const [members] = useState([
+    { id: 1, name: "Ahmet.agora", role: "Kurucu", status: "online", avatarColor: "bg-indigo-500" },
+    { id: 2, name: "Ayşe", role: "Moderatör", status: "idle", avatarColor: "bg-pink-500" },
+  ]);
+  const [posts] = useState([
+    { id: 1, user: "Ahmet.agora", content: "AGORA v1.0 yayında! 🚀", likes: 42, comments: 5 },
+    { id: 2, user: "Can_Dev", content: "Rust backend performansı şaka mı?", likes: 128, comments: 24 }
+  ]);
+
+  // Modallar
   const [isProfileOpen, setProfileOpen] = useState(false);
   const [isCreateServerOpen, setCreateServerOpen] = useState(false);
-  const [isCreateChannelOpen, setCreateChannelOpen] = useState(false); // YENİ STATE
+  const [isCreateChannelOpen, setCreateChannelOpen] = useState(false);
   const [isServerSettingsOpen, setServerSettingsOpen] = useState(false);
 
-  // MEDYA
+  // Medya
   const [isMicMuted, setMicMuted] = useState(false);
   const [isDeafened, setDeafened] = useState(false);
   const [spatialMode, setSpatialMode] = useState(true);
 
-  // --- BAŞLANGIÇ & KİŞİSELLEŞTİRİLMİŞ VERİ ÇEKME ---
+  // --- VERİ ÇEKME (DÜZELTİLDİ: SADECE ÜYE OLUNANLAR) ---
   useEffect(() => {
     if (!isLoggedIn) return;
 
     const initData = async () => {
       setLoading(true);
-      // 1. Anonim Giriş Yap ve ID'yi Al
       const { data: { user } } = await supabase.auth.signInAnonymously();
       if (user) setCurrentUserId(user.id);
 
-      // 2. Sadece Üye Olduğum Sunucuları Çek (JOIN SORGUSU)
-      // Not: Demo kolaylığı için şimdilik tüm sunucuları çekiyoruz,
-      // ama 'handleCreateServer' içinde otomatik üyelik ekliyoruz.
-      // Gerçek izolasyon için: supabase.from('server_members').select('server_id, servers(*)')
+      if (user) {
+        // 1. Sadece Benim Üye Olduğum Sunucuları Çek (İlişkisel Sorgu)
+        const { data: memberData, error } = await supabase
+          .from('server_members')
+          .select('server_id, servers(*)')
+          .eq('user_id', user.id);
 
-      const { data: serverData } = await supabase.from('servers').select('*').order('id', { ascending: true });
-      if (serverData) {
-        setServers(serverData);
-        if (serverData.length > 0) setActiveServerId(serverData[0].id);
+        if (memberData) {
+          // Gelen veriyi düzleştir (flatten)
+          const myServers = memberData.map((m: any) => m.servers).filter(s => s !== null);
+          setServers(myServers);
+
+          // İlk sunucuyu seç
+          if (myServers.length > 0 && activeServerId === 0) {
+            setActiveServerId(myServers[0].id);
+          }
+        }
       }
 
-      // 3. Kanalları Çek
+      // 2. Kanalları Çek (Tüm kanalları çekip client'ta filtrelemek daha hızlıdır)
       const { data: channelData } = await supabase.from('channels').select('*').order('id', { ascending: true });
       if (channelData) setChannels(channelData);
 
@@ -71,13 +87,22 @@ function App() {
 
     initData();
 
-    // REALTIME
+    // --- REALTIME DİNLEYİCİ (DÜZELTİLDİ: ÇİFT KAYIT KORUMASI) ---
     const sub = supabase.channel('public:all')
+      // Sunucu Eklendiğinde: Sadece listede yoksa ekle
       .on('postgres_changes', { event: '*', schema: 'public', table: 'servers' }, payload => {
-        if (payload.eventType === 'INSERT') setServers(prev => [...prev, payload.new]);
+        // Not: Gerçek bir uygulamada burada da "ben bu sunucuya üye miyim?" kontrolü yapılır.
+        // Şimdilik manuel ekleme yaptığımız için burayı pasif bırakabiliriz veya kontrol ekleyebiliriz.
       })
+      // Kanal Eklendiğinde
       .on('postgres_changes', { event: '*', schema: 'public', table: 'channels' }, payload => {
-        if (payload.eventType === 'INSERT') setChannels(prev => [...prev, payload.new]);
+        if (payload.eventType === 'INSERT') {
+          setChannels(prev => {
+            // Çift kayıt kontrolü: Zaten varsa ekleme
+            if (prev.find(c => c.id === payload.new.id)) return prev;
+            return [...prev, payload.new];
+          });
+        }
         if (payload.eventType === 'DELETE') setChannels(prev => prev.filter(c => c.id !== payload.old.id));
       })
       .subscribe();
@@ -85,7 +110,7 @@ function App() {
     return () => { supabase.removeChannel(sub); };
   }, [isLoggedIn]);
 
-  // --- MESAJLARI ÇEK ---
+  // --- MESAJLARI YÖNET ---
   useEffect(() => {
     if (!activeChannelId) return;
     const fetchMessages = async () => {
@@ -94,7 +119,13 @@ function App() {
     };
     fetchMessages();
     const msgSub = supabase.channel(`messages:${activeChannelId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `channel_id=eq.${activeChannelId}` }, payload => setMessages(prev => [...prev, payload.new]))
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `channel_id=eq.${activeChannelId}` }, payload => {
+        // Çift mesaj kontrolü
+        setMessages(prev => {
+          if (prev.find(m => m.id === payload.new.id)) return prev;
+          return [...prev, payload.new];
+        });
+      })
       .subscribe();
     return () => { supabase.removeChannel(msgSub); };
   }, [activeChannelId]);
@@ -110,7 +141,7 @@ function App() {
   }, [activeServerId, channels]);
 
 
-  // --- YENİ İŞLEVLER ---
+  // --- İŞLEVLER ---
 
   const handleCreateServer = async (name: string, type: string) => {
     if (!currentUserId) return;
@@ -125,27 +156,37 @@ function App() {
     if (error) { alert("Hata: " + error.message); return; }
 
     if (server) {
-      // 2. Otomatik Üye Yap (Kişiselleştirme)
+      // 2. Kendini Üye Yap (Kritik Adım)
       await supabase.from('server_members').insert({ user_id: currentUserId, server_id: server.id });
 
-      // 3. Varsayılan Kanalları Ekle
-      await supabase.from('channels').insert([
+      // 3. Kanalları Ekle
+      const { data: newChannels } = await supabase.from('channels').insert([
         { name: "genel", type: "text", server_id: server.id },
         { name: "Meydan", type: "voice", server_id: server.id }
-      ]);
+      ]).select();
+
+      // 4. Ekrana Yansıt (Manuel güncelleme, Realtime bekleme)
+      setServers(prev => [...prev, server]);
+      if (newChannels) setChannels(prev => [...prev, ...newChannels]);
 
       setActiveServerId(server.id);
     }
   };
 
-  // YENİ: Modal ile Kanal Ekleme (Prompt yerine)
   const handleAddChannel = async (name: string, type: string) => {
-    const { error } = await supabase.from('channels').insert({
+    const { data, error } = await supabase.from('channels').insert({
       name, type, server_id: activeServerId
-    });
+    }).select().single();
+
     if (error) alert(error.message);
+    else if (data) {
+      // Manuel ekle (Çift kayıt kontrolü useEffect içinde var ama hızlı tepki için burası da kalsın)
+      setChannels(prev => [...prev, data]);
+      handleChannelClick(data);
+    }
   };
 
+  // ... (Diğer silme/mesaj fonksiyonları aynı)
   const handleDeleteChannel = async (id: number) => {
     if (confirm("Silmek istediğine emin misin?")) {
       await supabase.from('channels').delete().eq('id', id);
@@ -154,11 +195,31 @@ function App() {
 
   const handleSendMessage = async () => {
     if (!inputText.trim() || !activeChannelId) return;
+    // Optimistik UI güncellemesi (Hız hissi için)
+    /*
+    const tempMsg = { id: Date.now(), content: inputText, username: currentUser, created_at: new Date().toISOString(), channel_id: activeChannelId };
+    setMessages(prev => [...prev, tempMsg]);
+    */
     await supabase.from('messages').insert({ content: inputText, channel_id: activeChannelId, username: currentUser });
     setInputText("");
   };
 
-  // ... (Ses, Oyun Motoru ve Diğer Kodlar aynı kalıyor) ...
+  const handleChannelClick = (channel: any) => {
+    setActiveChannelId(channel.id);
+    if (channel.type === 'text') setActiveTab('chat');
+    else setActiveTab('spatial');
+  }
+
+  // Sunucuya Tıklama
+  const handleServerClick = (serverId: number) => {
+    setActiveServerId(serverId);
+    setActiveTab('chat');
+    const serverChannels = channels.filter(c => c.server_id === serverId);
+    const firstText = serverChannels.find(c => c.type === 'text');
+    setActiveChannelId(firstText ? firstText.id : null);
+  }
+
+  // ... (Multiplayer ve Canvas kodları aynı)
   const [inputText, setInputText] = useState("");
   const { analyser } = useAudioProcessor();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -166,7 +227,6 @@ function App() {
   const [onlineUsers, setOnlineUsers] = useState<Record<string, any>>({});
   const channelRef = useRef<any>(null);
 
-  // Multiplayer Logic
   useEffect(() => {
     if (activeTab !== 'spatial' || !activeChannelId) return;
     const channel = supabase.channel(`room:${activeChannelId}`, { config: { presence: { key: currentUser } } });
@@ -184,7 +244,6 @@ function App() {
 
   useEffect(() => { if (channelRef.current && activeTab === 'spatial') channelRef.current.track({ x: pos.x, y: pos.y, username: currentUser }); }, [pos]);
 
-  // Canvas Draw
   useEffect(() => {
     if (activeTab === 'spatial' && canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d');
@@ -193,7 +252,6 @@ function App() {
         ctx.strokeStyle = isDarkMode ? '#333' : '#e5e7eb'; ctx.lineWidth = 1;
         for (let i = 0; i < 800; i += 50) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 600); ctx.stroke(); }
         for (let i = 0; i < 600; i += 50) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(800, i); ctx.stroke(); }
-
         Object.values(onlineUsers).forEach((user: any) => {
           ctx.fillStyle = '#10b981'; ctx.beginPath(); ctx.arc(user.x, user.y, 20, 0, Math.PI * 2); ctx.fill();
           ctx.fillStyle = isDarkMode ? 'white' : 'black'; ctx.font = '12px Arial'; ctx.fillText(user.username, user.x - 15, user.y - 25);
@@ -204,7 +262,6 @@ function App() {
     }
   }, [pos, activeTab, isDarkMode, currentUser, onlineUsers]);
 
-  // Key Event
   useEffect(() => {
     if (activeTab === 'spatial') {
       const move = (e: KeyboardEvent) => {
@@ -225,8 +282,6 @@ function App() {
   return (
     <div className={`h-screen w-screen ${theme.bg} flex items-center justify-center p-4 overflow-hidden relative font-sans ${theme.text}`}>
       <ProfileModal isOpen={isProfileOpen} onClose={() => setProfileOpen(false)} />
-
-      {/* MODALLAR BAĞLANDI */}
       <CreateServerModal isOpen={isCreateServerOpen} onClose={() => setCreateServerOpen(false)} onCreate={handleCreateServer} />
       <CreateChannelModal isOpen={isCreateChannelOpen} onClose={() => setCreateChannelOpen(false)} onCreate={handleAddChannel} />
       <ServerSettingsModal isOpen={isServerSettingsOpen} onClose={() => setServerSettingsOpen(false)} server={servers.find(s => s.id === activeServerId)} />
@@ -236,10 +291,8 @@ function App() {
         <div className="w-[72px] flex flex-col gap-3 shrink-0">
           <GlassPanel isDarkMode={isDarkMode} className="h-14 bg-indigo-600 flex items-center justify-center cursor-pointer" onClick={() => setActiveTab('feed')}><span className="font-bold text-xl text-white">A</span></GlassPanel>
           <div className="w-full h-[2px] bg-gray-500/20 rounded-full"></div>
-
-          {/* SUNUCU LİSTESİ */}
           {servers.map(s => (
-            <GlassPanel key={s.id} isDarkMode={isDarkMode} onClick={() => setActiveServerId(s.id)} className={`h-[72px] flex items-center justify-center cursor-pointer transition-all border-l-4 ${activeServerId === s.id ? 'border-indigo-500 text-indigo-500' : 'border-transparent text-gray-400'}`}>
+            <GlassPanel key={s.id} isDarkMode={isDarkMode} onClick={() => handleServerClick(s.id)} className={`h-[72px] flex items-center justify-center cursor-pointer transition-all border-l-4 ${activeServerId === s.id ? 'border-indigo-500 text-indigo-500' : 'border-transparent text-gray-400'}`}>
               <span className="font-bold text-lg">{s.icon}</span>
             </GlassPanel>
           ))}
@@ -250,7 +303,6 @@ function App() {
           </div>
         </div>
 
-        {/* ORTA KISIM */}
         {activeTab !== 'feed' && (
           <div className="w-64 flex flex-col gap-4 shrink-0 animate-in slide-in-from-left-4 duration-300">
             <GlassPanel isDarkMode={isDarkMode} className="flex-1 p-3 flex flex-col">
@@ -258,7 +310,6 @@ function App() {
                 <span className="truncate">{servers.find(s => s.id === activeServerId)?.name || 'Sunucu'}</span>
                 <MoreVertical size={16} className="cursor-pointer text-gray-500 hover:text-white" onClick={() => setServerSettingsOpen(true)} />
               </header>
-
               {loading ? <div className="flex items-center justify-center h-32 text-gray-500"><Loader2 className="animate-spin mr-2" /> Yükleniyor...</div> : (
                 <div className="space-y-6 overflow-y-auto custom-scrollbar">
                   <div>
@@ -276,7 +327,6 @@ function App() {
                 </div>
               )}
             </GlassPanel>
-
             <GlassPanel isDarkMode={isDarkMode} className="h-auto p-3 flex flex-col gap-3 shrink-0">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 cursor-pointer p-1.5 rounded-lg" onClick={() => setProfileOpen(true)}>
@@ -294,16 +344,35 @@ function App() {
           </div>
         )}
 
-        {/* SAĞ KISIM (Aynı) */}
         <GlassPanel isDarkMode={isDarkMode} className="flex-1 flex flex-col relative overflow-hidden">
-          {activeTab === 'feed' ? <div className="flex-1 flex items-center justify-center text-2xl font-bold text-gray-500">Akış Yakında</div> : (
+          {activeTab === 'feed' ? (
+            <div className="flex-1 flex flex-col bg-transparent">
+              <header className={`h-16 border-b border-gray-500/10 flex items-center justify-between px-8 shrink-0`}>
+                <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-500 to-purple-500 bg-clip-text text-transparent">Akış</h1>
+                <button className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-500 transition">Paylaşım Yap</button>
+              </header>
+              <div className="flex-1 overflow-y-auto p-8 max-w-3xl mx-auto w-full space-y-6">
+                {posts.map(post => (
+                  <div key={post.id} className={`${isDarkMode ? 'bg-white/5' : 'bg-white'} border border-gray-500/10 rounded-3xl p-6 shadow-sm`}>
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-10 h-10 rounded-full bg-indigo-500 flex items-center justify-center font-bold text-white text-lg">{post.user.charAt(0)}</div>
+                      <div><div className="font-bold">{post.user}</div><div className="text-xs text-gray-500">2 saat önce</div></div>
+                    </div>
+                    <p className={`mb-4 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>{post.content}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
             <>
               <header className="h-14 border-b border-gray-500/10 flex items-center justify-between px-6 backdrop-blur-md shrink-0">
                 <div className="flex items-center gap-2">
                   {activeTab === 'chat' ? <Hash className="text-gray-400" /> : <Volume2 className="text-indigo-400" />}
                   <span className="font-bold text-lg">{channels.find(c => c.id === activeChannelId)?.name || 'Kanal Seçin'}</span>
                 </div>
-                <Users onClick={() => setShowMembers(!showMembers)} className="cursor-pointer text-gray-400" />
+                <div className="flex items-center gap-4">
+                  <Users onClick={() => setShowMembers(!showMembers)} className="cursor-pointer text-gray-400" />
+                </div>
               </header>
 
               <div className="flex flex-1 overflow-hidden">
@@ -311,25 +380,27 @@ function App() {
                   {activeTab === 'chat' ? (
                     <>
                       <div className="flex-1 overflow-y-auto p-6 space-y-4 flex flex-col justify-end">
-                        {messages.map((m) => (
-                          <div key={m.id} className="flex gap-4 group animate-in slide-in-from-left-2">
-                            <div className={`w-10 h-10 rounded-2xl bg-indigo-500 shrink-0 flex items-center justify-center font-bold text-white`}>{m.username?.charAt(0) || '?'}</div>
-                            <div>
-                              <div className="flex items-center gap-2 mb-1"><span className="font-bold">{m.username}</span><span className="text-xs text-gray-500">{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
-                              <p className="text-gray-300 text-sm">{m.content}</p>
+                        {activeChannelId ? (
+                          messages.length > 0 ? messages.map((m) => (
+                            <div key={m.id} className="flex gap-4 group animate-in slide-in-from-left-2">
+                              <div className={`w-10 h-10 rounded-2xl bg-indigo-500 shrink-0 flex items-center justify-center font-bold text-white`}>{m.username?.charAt(0) || '?'}</div>
+                              <div>
+                                <div className="flex items-center gap-2 mb-1"><span className="font-bold">{m.username}</span><span className="text-xs text-gray-500">{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
+                                <p className="text-gray-300 text-sm">{m.content}</p>
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          )) : <div className="text-center text-gray-500 mt-10">Bu kanalda henüz mesaj yok. İlk sen yaz!</div>
+                        ) : <div className="text-center text-gray-500 mt-10">Bir kanal seçin.</div>}
                       </div>
                       <div className="p-6 pt-2 shrink-0">
-                        <div className={`rounded-2xl flex items-center p-1.5 border border-gray-500/10 ${isDarkMode ? 'bg-white/5' : 'bg-gray-200'}`}>
+                        <div className={`backdrop-blur-md rounded-2xl flex items-center p-1.5 border border-gray-500/10 ${isDarkMode ? 'bg-white/5' : 'bg-gray-200'}`}>
                           <input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} placeholder="Mesaj gönder..." className="flex-1 bg-transparent px-2 outline-none" disabled={!activeChannelId} />
                           <button onClick={handleSendMessage} className="p-2 bg-indigo-600 text-white rounded-xl"><Send size={18} /></button>
                         </div>
                       </div>
                     </>
                   ) : (
-                    <div className={`flex-1 ${isDarkMode ? 'bg-[#1a1b26]' : 'bg-white'} relative flex items-center justify-center`}>
+                    <div className={`flex-1 ${isDarkMode ? 'bg-[#1a1b26]' : 'bg-white'} relative flex items-center justify-center overflow-hidden`}>
                       <canvas ref={canvasRef} width={800} height={600} className="rounded-xl border border-white/10" />
                     </div>
                   )}
