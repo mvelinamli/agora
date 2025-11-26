@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { X, Gamepad2, Briefcase, GraduationCap, Shield, Users, Hash, Trash2, Save } from 'lucide-react';
+import { X, Gamepad2, Briefcase, GraduationCap, Shield } from 'lucide-react';
 
-// --- SUNUCU OLUŞTURMA MODALI (Sihirbaz) ---
+// --- SUNUCU OLUŞTURMA MODALI ---
 export const CreateServerModal = ({ isOpen, onClose, onCreate }: any) => {
     const [step, setStep] = useState(1);
     const [type, setType] = useState('');
