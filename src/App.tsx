@@ -16,7 +16,7 @@ function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
 
-  // --- STATE ---
+  // --- STATE YÖNETİMİ ---
   const [activeTab, setActiveTab] = useState<'chat' | 'spatial' | 'feed'>('chat');
   const [activeServerId, setActiveServerId] = useState<number>(0);
   const [activeChannelId, setActiveChannelId] = useState<number | null>(null);
@@ -25,14 +25,16 @@ function App() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Veriler
   const [servers, setServers] = useState<any[]>([]);
   const [channels, setChannels] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
 
-  // State'ler
+  // Statik Veriler (Eksik olanlar geri eklendi)
   const [members] = useState([
     { id: 1, name: "Ahmet.agora", role: "Kurucu", status: "online", avatarColor: "bg-indigo-500" },
     { id: 2, name: "Ayşe", role: "Moderatör", status: "idle", avatarColor: "bg-pink-500" },
+    { id: 3, name: "Mehmet", role: "Üye", status: "dnd", avatarColor: "bg-blue-500" },
   ]);
   const [posts] = useState([
     { id: 1, user: "Ahmet.agora", content: "AGORA v1.0 yayında! 🚀", likes: 42, comments: 5 },
@@ -50,35 +52,37 @@ function App() {
   const [isDeafened, setDeafened] = useState(false);
   const [spatialMode, setSpatialMode] = useState(true);
 
-  // --- VERİ ÇEKME (DÜZELTİLDİ: SADECE ÜYE OLUNANLAR) ---
+  // --- SUPABASE VERİ ÇEKME (DATA FETCHING) ---
   useEffect(() => {
     if (!isLoggedIn) return;
 
     const initData = async () => {
       setLoading(true);
+
+      // 1. Kimlik Doğrulama
       const { data: { user } } = await supabase.auth.signInAnonymously();
       if (user) setCurrentUserId(user.id);
 
       if (user) {
-        // 1. Sadece Benim Üye Olduğum Sunucuları Çek (İlişkisel Sorgu)
-        const { data: memberData, error } = await supabase
+        // 2. Sadece Benim Üye Olduğum Sunucuları Çek (İzole Veri)
+        const { data: memberData } = await supabase
           .from('server_members')
           .select('server_id, servers(*)')
           .eq('user_id', user.id);
 
         if (memberData) {
-          // Gelen veriyi düzleştir (flatten)
+          // Gelen veriyi düzgün formata çevir
           const myServers = memberData.map((m: any) => m.servers).filter(s => s !== null);
           setServers(myServers);
 
-          // İlk sunucuyu seç
+          // İlk sunucuyu otomatik seç
           if (myServers.length > 0 && activeServerId === 0) {
             setActiveServerId(myServers[0].id);
           }
         }
       }
 
-      // 2. Kanalları Çek (Tüm kanalları çekip client'ta filtrelemek daha hızlıdır)
+      // 3. Kanalları Çek
       const { data: channelData } = await supabase.from('channels').select('*').order('id', { ascending: true });
       if (channelData) setChannels(channelData);
 
@@ -87,18 +91,19 @@ function App() {
 
     initData();
 
-    // --- REALTIME DİNLEYİCİ (DÜZELTİLDİ: ÇİFT KAYIT KORUMASI) ---
+    // --- REALTIME DİNLEYİCİ (ÇİFT KAYIT KORUMALI) ---
     const sub = supabase.channel('public:all')
-      // Sunucu Eklendiğinde: Sadece listede yoksa ekle
+      // Sunucu Eklendiğinde
       .on('postgres_changes', { event: '*', schema: 'public', table: 'servers' }, payload => {
-        // Not: Gerçek bir uygulamada burada da "ben bu sunucuya üye miyim?" kontrolü yapılır.
-        // Şimdilik manuel ekleme yaptığımız için burayı pasif bırakabiliriz veya kontrol ekleyebiliriz.
+        // Buraya bir kontrol koymuyoruz çünkü sunucuyu "server_members" üzerinden filtreliyoruz.
+        // Yeni sunucu eklendiğinde anlık gelmesi için "server_members"ı dinlemek daha doğru olurdu ama
+        // şimdilik manuel ekleme ile (handleCreateServer) bunu çözüyoruz.
       })
       // Kanal Eklendiğinde
       .on('postgres_changes', { event: '*', schema: 'public', table: 'channels' }, payload => {
         if (payload.eventType === 'INSERT') {
           setChannels(prev => {
-            // Çift kayıt kontrolü: Zaten varsa ekleme
+            // KORUMA: Eğer bu kanal zaten listede varsa, tekrar ekleme!
             if (prev.find(c => c.id === payload.new.id)) return prev;
             return [...prev, payload.new];
           });
@@ -120,8 +125,8 @@ function App() {
     fetchMessages();
     const msgSub = supabase.channel(`messages:${activeChannelId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `channel_id=eq.${activeChannelId}` }, payload => {
-        // Çift mesaj kontrolü
         setMessages(prev => {
+          // KORUMA: Çift mesajı engelle
           if (prev.find(m => m.id === payload.new.id)) return prev;
           return [...prev, payload.new];
         });
@@ -132,21 +137,40 @@ function App() {
 
   const visibleChannels = channels.filter(c => c.server_id === activeServerId);
 
+  // Otomatik Kanal Seçimi
   useEffect(() => {
-    if (visibleChannels.length > 0 && !visibleChannels.find(c => c.id === activeChannelId)) {
-      const first = visibleChannels.find(c => c.type === 'text');
-      if (first) { setActiveChannelId(first.id); setActiveTab('chat'); }
-      else setActiveChannelId(null);
+    // Sadece sunucu değiştiğinde veya ilk yüklemede çalışsın
+    if (visibleChannels.length > 0) {
+      const currentChannelExists = visibleChannels.find(c => c.id === activeChannelId);
+      if (!currentChannelExists) {
+        const firstText = visibleChannels.find(c => c.type === 'text');
+        if (firstText) {
+          setActiveChannelId(firstText.id);
+          setActiveTab('chat');
+        } else {
+          setActiveChannelId(null);
+        }
+      }
     }
-  }, [activeServerId, channels]);
+  }, [activeServerId, channels]); // Dependency array önemli
 
 
-  // --- İŞLEVLER ---
+  // --- İŞLEVLER (FONKSİYONLAR) ---
+
+  const handleServerClick = (serverId: number) => {
+    setActiveServerId(serverId);
+    setActiveTab('chat'); // Akıştan çık, sohbete dön
+
+    // O sunucunun ilk kanalını bul
+    const serverChannels = channels.filter(c => c.server_id === serverId);
+    const firstText = serverChannels.find(c => c.type === 'text');
+    if (firstText) setActiveChannelId(firstText.id);
+  }
 
   const handleCreateServer = async (name: string, type: string) => {
     if (!currentUserId) return;
 
-    // 1. Sunucuyu Oluştur
+    // 1. Sunucuyu Veritabanına Ekle
     const { data: server, error } = await supabase
       .from('servers')
       .insert({ name, icon: name.charAt(0).toUpperCase(), type })
@@ -156,20 +180,21 @@ function App() {
     if (error) { alert("Hata: " + error.message); return; }
 
     if (server) {
-      // 2. Kendini Üye Yap (Kritik Adım)
+      // 2. Kendini Üye Yap (Gizlilik için şart)
       await supabase.from('server_members').insert({ user_id: currentUserId, server_id: server.id });
 
-      // 3. Kanalları Ekle
+      // 3. Varsayılan Kanalları Ekle
       const { data: newChannels } = await supabase.from('channels').insert([
         { name: "genel", type: "text", server_id: server.id },
         { name: "Meydan", type: "voice", server_id: server.id }
       ]).select();
 
-      // 4. Ekrana Yansıt (Manuel güncelleme, Realtime bekleme)
+      // 4. Listeleri Manuel Güncelle (Anlık tepki için)
       setServers(prev => [...prev, server]);
       if (newChannels) setChannels(prev => [...prev, ...newChannels]);
 
-      setActiveServerId(server.id);
+      // 5. Yeni Sunucuya Geç
+      handleServerClick(server.id);
     }
   };
 
@@ -180,13 +205,11 @@ function App() {
 
     if (error) alert(error.message);
     else if (data) {
-      // Manuel ekle (Çift kayıt kontrolü useEffect içinde var ama hızlı tepki için burası da kalsın)
       setChannels(prev => [...prev, data]);
       handleChannelClick(data);
     }
   };
 
-  // ... (Diğer silme/mesaj fonksiyonları aynı)
   const handleDeleteChannel = async (id: number) => {
     if (confirm("Silmek istediğine emin misin?")) {
       await supabase.from('channels').delete().eq('id', id);
@@ -195,11 +218,6 @@ function App() {
 
   const handleSendMessage = async () => {
     if (!inputText.trim() || !activeChannelId) return;
-    // Optimistik UI güncellemesi (Hız hissi için)
-    /*
-    const tempMsg = { id: Date.now(), content: inputText, username: currentUser, created_at: new Date().toISOString(), channel_id: activeChannelId };
-    setMessages(prev => [...prev, tempMsg]);
-    */
     await supabase.from('messages').insert({ content: inputText, channel_id: activeChannelId, username: currentUser });
     setInputText("");
   };
@@ -210,16 +228,7 @@ function App() {
     else setActiveTab('spatial');
   }
 
-  // Sunucuya Tıklama
-  const handleServerClick = (serverId: number) => {
-    setActiveServerId(serverId);
-    setActiveTab('chat');
-    const serverChannels = channels.filter(c => c.server_id === serverId);
-    const firstText = serverChannels.find(c => c.type === 'text');
-    setActiveChannelId(firstText ? firstText.id : null);
-  }
-
-  // ... (Multiplayer ve Canvas kodları aynı)
+  // --- DİĞER BİLEŞENLER ---
   const [inputText, setInputText] = useState("");
   const { analyser } = useAudioProcessor();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -227,6 +236,7 @@ function App() {
   const [onlineUsers, setOnlineUsers] = useState<Record<string, any>>({});
   const channelRef = useRef<any>(null);
 
+  // Multiplayer Logic
   useEffect(() => {
     if (activeTab !== 'spatial' || !activeChannelId) return;
     const channel = supabase.channel(`room:${activeChannelId}`, { config: { presence: { key: currentUser } } });
@@ -244,12 +254,15 @@ function App() {
 
   useEffect(() => { if (channelRef.current && activeTab === 'spatial') channelRef.current.track({ x: pos.x, y: pos.y, username: currentUser }); }, [pos]);
 
+  // Canvas Draw
   useEffect(() => {
     if (activeTab === 'spatial' && canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d');
       if (ctx) {
-        ctx.fillStyle = isDarkMode ? '#1a1b26' : '#f3f4f6'; ctx.fillRect(0, 0, 800, 600);
-        ctx.strokeStyle = isDarkMode ? '#333' : '#e5e7eb'; ctx.lineWidth = 1;
+        const bgColor = isDarkMode ? '#1a1b26' : '#f3f4f6';
+        const gridColor = isDarkMode ? '#333' : '#e5e7eb';
+        ctx.fillStyle = bgColor; ctx.fillRect(0, 0, 800, 600);
+        ctx.strokeStyle = gridColor; ctx.lineWidth = 1;
         for (let i = 0; i < 800; i += 50) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 600); ctx.stroke(); }
         for (let i = 0; i < 600; i += 50) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(800, i); ctx.stroke(); }
         Object.values(onlineUsers).forEach((user: any) => {
@@ -262,9 +275,11 @@ function App() {
     }
   }, [pos, activeTab, isDarkMode, currentUser, onlineUsers]);
 
+  // Key Event
   useEffect(() => {
     if (activeTab === 'spatial') {
       const move = (e: KeyboardEvent) => {
+        if (document.activeElement?.tagName === 'INPUT') return; // Yazı yazarken hareket etme
         if (e.key === 'w') setPos(p => ({ ...p, y: p.y - 10 }));
         if (e.key === 's') setPos(p => ({ ...p, y: p.y + 10 }));
         if (e.key === 'a') setPos(p => ({ ...p, x: p.x - 10 }));
@@ -288,6 +303,7 @@ function App() {
 
       <div className="flex w-full h-full max-w-[1600px] gap-4 relative z-10">
 
+        {/* SOL SÜTUN */}
         <div className="w-[72px] flex flex-col gap-3 shrink-0">
           <GlassPanel isDarkMode={isDarkMode} className="h-14 bg-indigo-600 flex items-center justify-center cursor-pointer" onClick={() => setActiveTab('feed')}><span className="font-bold text-xl text-white">A</span></GlassPanel>
           <div className="w-full h-[2px] bg-gray-500/20 rounded-full"></div>
@@ -303,6 +319,7 @@ function App() {
           </div>
         </div>
 
+        {/* ORTA SÜTUN */}
         {activeTab !== 'feed' && (
           <div className="w-64 flex flex-col gap-4 shrink-0 animate-in slide-in-from-left-4 duration-300">
             <GlassPanel isDarkMode={isDarkMode} className="flex-1 p-3 flex flex-col">
@@ -344,6 +361,7 @@ function App() {
           </div>
         )}
 
+        {/* SAĞ SAHNE */}
         <GlassPanel isDarkMode={isDarkMode} className="flex-1 flex flex-col relative overflow-hidden">
           {activeTab === 'feed' ? (
             <div className="flex-1 flex flex-col bg-transparent">
@@ -393,7 +411,7 @@ function App() {
                         ) : <div className="text-center text-gray-500 mt-10">Bir kanal seçin.</div>}
                       </div>
                       <div className="p-6 pt-2 shrink-0">
-                        <div className={`backdrop-blur-md rounded-2xl flex items-center p-1.5 border border-gray-500/10 ${isDarkMode ? 'bg-white/5' : 'bg-gray-200'}`}>
+                        <div className={`rounded-2xl flex items-center p-1.5 border border-gray-500/10 ${isDarkMode ? 'bg-white/5' : 'bg-gray-200'}`}>
                           <input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} placeholder="Mesaj gönder..." className="flex-1 bg-transparent px-2 outline-none" disabled={!activeChannelId} />
                           <button onClick={handleSendMessage} className="p-2 bg-indigo-600 text-white rounded-xl"><Send size={18} /></button>
                         </div>
@@ -401,7 +419,21 @@ function App() {
                     </>
                   ) : (
                     <div className={`flex-1 ${isDarkMode ? 'bg-[#1a1b26]' : 'bg-white'} relative flex items-center justify-center overflow-hidden`}>
-                      <canvas ref={canvasRef} width={800} height={600} className="rounded-xl border border-white/10" />
+                      {spatialMode ? (
+                        <>
+                          <canvas ref={canvasRef} width={800} height={600} className="rounded-xl shadow-2xl border border-white/10" />
+                          <div className="absolute top-4 left-4 bg-black/50 p-2 rounded text-xs text-white backdrop-blur-md">WASD ile hareket et</div>
+                          <div className="absolute top-4 right-4 flex gap-2 bg-black/50 p-1 rounded-lg backdrop-blur-md">
+                            <button onClick={() => setSpatialMode(false)} className={`p-2 rounded ${!spatialMode ? 'bg-indigo-500 text-white' : 'text-gray-400 hover:text-white'}`}><Radio size={16} /></button>
+                            <button onClick={() => setSpatialMode(true)} className={`p-2 rounded ${spatialMode ? 'bg-indigo-500 text-white' : 'text-gray-400 hover:text-white'}`}><Map size={16} /></button>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-center space-y-4">
+                          <div className="w-24 h-24 bg-indigo-500/10 rounded-full flex items-center justify-center mx-auto animate-pulse"><Volume2 className="text-indigo-500" size={48} /></div>
+                          <h2 className="text-2xl font-bold text-gray-500">Standart Ses Modu</h2>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -415,6 +447,7 @@ function App() {
   );
 }
 
+// --- BİLEŞENLER ---
 const GlassPanel = ({ children, className, onClick, isDarkMode }: any) => (
   <div onClick={onClick} className={`backdrop-blur-xl ${isDarkMode ? 'bg-[#11131f]/60 border-white/5' : 'bg-white/70 border-gray-200'} border rounded-3xl shadow-xl overflow-hidden ${className}`}>{children}</div>
 );
